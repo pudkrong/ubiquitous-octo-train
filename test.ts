@@ -1,59 +1,29 @@
-import { ServiceBusClient } from '@azure/service-bus';
-import { DefaultAzureCredential } from '@azure/identity';
-import { randomUUID } from 'crypto';
-import { receiveMessageOnPort, resourceLimits } from 'worker_threads';
-import pLimit from 'p-limit';
-import { createServer } from 'node:net';
-
-const namespace = 'acc-d-weu-sb-ns';
-const requestQueueName = 'acc-d-weu-sb-request';
-const replyQueueName = 'acc-d-weu-sb-reply';
-const fullyQualifiedNamespace = `${namespace}.servicebus.windows.net`;
-const credential = new DefaultAzureCredential();
-
-const timeout = 5;
-const client = new ServiceBusClient(fullyQualifiedNamespace, credential);
-const sender = client.createSender(requestQueueName);
-
-const request = async (payload) => {
-  const sessionId = randomUUID();
-  // Send request through request queue
-  console.log(`sending request: ${sessionId}`, payload);
-  await sender.sendMessages({
-    body: payload,
-    sessionId,
-    timeToLive: 60 * 1000,
-  });
-};
-
-const dequeue = async () => {
-  const receiver = await client.acceptNextSession(requestQueueName, {
-    receiveMode: 'receiveAndDelete',
-  });
-  const response = await receiver.receiveMessages(1, {
-    maxWaitTimeInMs: 100,
-  });
-  if (response.length === 0) return null;
-  console.log(`session id: ${receiver.sessionId} > `, response[0].body);
-  return response[0].body;
-};
+import { EventEmitter } from "node:events";
+import { setTimeout } from "node:timers/promises";
 
 async function main() {
-  // Sending
-  await Promise.all(
-    Array.from({ length: 10 }, (_, i) => i).map((i) => request({ value: i })),
-  );
+  const emitter = new EventEmitter({
+    captureRejections: true,
+  });
 
-  Array.from({ length: 10 }, (_, i) => i).map((i) => dequeue());
+  emitter.on("error", (...args) => {
+    console.log(Date.now());
+    console.log(">>>>", args);
+  });
 
-  await new Promise(() => {}).then(() => {});
+  emitter.on("request", async (v) => {
+    await onRequest(v);
+  });
+
+  const onRequest = async (v) => {
+    await setTimeout(1000);
+    throw new Error(`Error from ${v}`);
+  };
+
+  for (let i = 0; i < 3; i++) {
+    emitter.emit("request", i);
+  }
+  console.log("done");
 }
 
-main()
-  .then(() => console.log('Done'))
-  .catch(console.error)
-  .finally(async () => {
-    console.log('closing client');
-    await sender.close();
-    await client.close();
-  });
+main().catch(console.error);
