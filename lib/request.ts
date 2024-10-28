@@ -24,6 +24,8 @@ export class Request {
   private sender: ServiceBusSender;
   private receiver: ServiceBusReceiver;
   private replyQueue: string;
+  private initialized = false;
+  private closing = false;
   private pendingRequests: Map<
     string,
     {
@@ -59,7 +61,7 @@ export class Request {
     }
   }
 
-  async start(): Promise<void> {
+  async initial(): Promise<void> {
     await this.assertReceiverQueue();
 
     this.logger.info(`Start receiving response from ${this.replyQueue}`);
@@ -67,9 +69,14 @@ export class Request {
       processMessage: this.handleResponse.bind(this),
       processError: this.handleError.bind(this),
     });
+
+    this.initialized = true;
   }
 
   async request(payload: any, timeoutInMs?: number): Promise<any> {
+    if (this.initialized === false) throw new Error("Not initialized");
+    if (this.closing) return this.logger.warn(`Request is closing`);
+
     const requestId = randomUUID();
     timeoutInMs = timeoutInMs ?? this.options.timeoutInMs;
 
@@ -125,6 +132,7 @@ export class Request {
 
   async close() {
     this.logger.debug(`Closing all resources`);
+    this.closing = true;
     await Promise.all([this.sender.close(), this.receiver?.close()]);
 
     await this.client.close();
